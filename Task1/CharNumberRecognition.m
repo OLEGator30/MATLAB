@@ -1,15 +1,10 @@
 function res=CharNumberRecognition(filename,show,method)
-% CharNumberRecognition
-
-if ((show~=true)&&(show~=false))
-    error('The second parameter is incorrect');
-end
 img=imread(filename);
 orig=img;
 img=correct(img);
-[l len]=findnumbers(img);
+[img len]=findnumbers(img);
 if ((method==0)||(method==1))
-    [num1 num2 num3]=Recognition(l,show,orig,len,method);
+    [num1 num2 num3]=Recognition(img,show,orig,len,method);
 else
     error('The third parameter is incorrect');
 end
@@ -18,9 +13,6 @@ end
 
 function [num1 num2 num3]=Recognition(l,show,orig,len,method)
 st=regionprops(l,'BoundingBox');
-num1=10;
-num2=10;
-num3=10;
 if (len==3)
     arr=[st(1).BoundingBox(1) st(2).BoundingBox(1) st(3).BoundingBox(1)];
     arr=sort(arr);
@@ -78,18 +70,18 @@ elseif (len==1)
     else
         num1=numberis1(l);
     end
+else
+    num1=10;
+    num2=10;
+    num3=10;
 end
 if (show==true)
     figure, imshow(orig);
-    printbox(l(:,:)>0);
+    printbox(l>0,len,size(orig));
 end
 end
 
 function num=numberis0(img)
-img=imresize(img,[200 NaN]);
-sl=strel('disk',6);
-img=imclose(img,sl);
-img=img(:,:)>0.8;
 st=regionprops(img,'BoundingBox','Area','EulerNumber','FilledArea','Centroid','Extrema');
 if (st.EulerNumber==-1)
     num=8;
@@ -128,40 +120,42 @@ else
 end
 end
 
-function num=numberis1(img)
+function imin=numberis1(img)
 stat=regionprops(img,'Image');
 img=stat.Image;
 img=imresize(img,[50 30]);
 min=1500;
 for j=0:9
-    name=sprintf('%d.bmp',j);
-    n=imread(name);
+    n=sprintf('%d.bmp',j);
+    n=imread(n);
     n=xor(n,img);
     if (sum(sum(n))<min)
         min=sum(sum(n));
         imin=j;
     end
 end
-num=imin;
 end
 
 function img=correct(img)
+img=imresize(img,[250 NaN]);
+img=adapthisteq(img,'Distribution','exponential','Alpha',0.1);
 img=imadjust(img);
-img=medfilt2(img);
+f=fspecial('gaussian')*fspecial('average');
+img=imfilter(img,f);
 img=imadjust(img);
 end
 
-function [l len]=findnumbers(img)
-bw=img(:,:,:)<110;
-l=bwlabel(bw);
-l=sortarea(l);
-[l len]=findchars(l);
+function [img len]=findnumbers(img)
+img=~im2bw(img,graythresh(img)-0.075);
+img=sortarea(bwlabel(img));
+[img len]=findchars(img);
 end
 
 function l=sortarea(l)
+l=imopen(l,strel('disk',2));
 stat=regionprops(l,'Area');
-idx1=find([stat.Area]>50);
-idx2=find([stat.Area]<350);
+idx1=find([stat.Area]>500);
+idx2=find([stat.Area]<6500);
 idx=intersect(idx1,idx2);
 l=bwlabel(ismember(l,idx));
 end
@@ -171,50 +165,59 @@ stat=regionprops(l,'BoundingBox');
 len=length([stat.BoundingBox])/4;
 idx=[];
 for i=1:len
-    temp=stat(i);
-    h=[temp.BoundingBox];
-    if (h(4)>h(3))
+    if ((stat(i).BoundingBox(4)>stat(i).BoundingBox(3))&&(stat(i).BoundingBox(4)/stat(i).BoundingBox(3)<3.5))
         idx=cat(2,idx,i);
     end
 end
 l=bwlabel(ismember(l,idx));
 if (length(idx)>3)
-    l=find3(l,stat,length(idx));
+    l=find3(l);
     len=3;
     return;
 end
 len=length(idx);
 end
 
-function l=find3(l,st,len)
-while len>3
-    idx=1:len;
-    tmp=st(1);
-    h=[tmp.BoundingBox];
-    imin=1;
-    min=h(4);
-    for i=2:len
-        tmp=st(i);
-        h=[tmp.BoundingBox];
-        if (min>h(4))
-            min=h(4);
-            imin=i;
-        end
-    end
-    idx=setdiff(idx,imin);
-    l=bwlabel(ismember(l,idx));
+function l=find3(l)
+while 1
     st=regionprops(l,'BoundingBox');
-    len=length(idx);
+    len=length([st.BoundingBox])/4;
+    idx=findmax(st,len);
+    arr=[abs(st(idx(1)).BoundingBox(1)-st(idx(2)).BoundingBox(1)) abs(st(idx(3)).BoundingBox(1)-st(idx(2)).BoundingBox(1)) abs(st(idx(1)).BoundingBox(1)-st(idx(3)).BoundingBox(1))];
+    [arr i]=sort(arr);
+    if (((arr(1)<95)&&(arr(2)<95))||(len==3))
+        l=bwlabel(ismember(l,idx));
+        break;
+    else
+        if (i(1)==1)
+            id=1:len;
+            idx=setdiff(id,idx(3));
+        elseif (i(1)==2)
+            id=1:len;
+            idx=setdiff(id,idx(1));
+        else
+            id=1:len;
+            idx=setdiff(id,idx(2));
+        end
+        l=bwlabel(ismember(l,idx));
+    end
 end
 end
 
-function printbox(l)
-stat=regionprops(l,'BoundingBox');
-len=length([stat.BoundingBox])/4;
+function idx=findmax(st,len)
 for i=1:len
-    temp=stat(i);
-    h=[temp.BoundingBox];
-    h=imrect(gca,h);
-    h.setResizable(0);
+    arr(i)=st(i).BoundingBox(4);
+end
+[arr idx]=sort(arr,'descend');
+idx=idx(1:3);
+end
+
+function printbox(l,len,s)
+l=imresize(l,s);
+stat=regionprops(l,'BoundingBox');
+for i=1:len
+    l=[stat(i).BoundingBox];
+    l=imrect(gca,l);
+    l.setResizable(0);
 end
 end
